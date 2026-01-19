@@ -1,0 +1,38 @@
+name: SonarLess Scan
+description: SonarLess Scan Action
+inputs:
+  fetch-depth:
+    description: "Number of commits to fetch. 0 indicates all history for all branches and tags."
+    required: false
+    default: "0"
+  sonar-source-path:
+    description: "Path to the source code"
+    required: false
+    default: "src"
+
+runs:
+  using: composite
+  steps:
+    - name: Checkout
+      uses: actions/checkout@v6
+      with:
+        fetch-depth: ${{ inputs.fetch-depth }}
+
+    - name: Run Sonarless
+      uses: gitricko/sonarless@v1
+      with:
+        sonar-source-path: ${{ inputs.sonar-source-path }}
+        sonar-metrics-path: "./sonar-metrics.json"
+
+    - name: Upload Sonar metrics
+      uses: actions/upload-artifact@v6
+      with:
+        name: sonar-metrics
+        path: "./sonar-metrics.json"
+
+    - name: Check Sonar Metrics - No Vulnerabilities
+      shell: bash
+      env:
+        METRICS_PATH: "./sonar-metrics.json"
+        QUALITY_GATE_PATH: ${{ github.action_path }}/scripts/quality-gate.json
+      run: bash ${{ github.action_path }}/scripts/check_quality_gate.sh

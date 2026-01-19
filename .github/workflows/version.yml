@@ -1,0 +1,23 @@
+name: Release
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  semantic-version:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Semantic Version
+        uses: orbitcluster/oc-cicd-release-workflow@v1
+        with:
+          dry-run: ${{ github.ref_name != 'main' }}
+          github-token: ${{ github.token }}
