@@ -23,6 +23,8 @@ runs:
       with:
         sonar-source-path: ${{ inputs.sonar-source-path }}
         sonar-metrics-path: "./sonar-metrics.json"
+      env:
+        DOCKER_SONAR_SERVER: "sonarqube:10.6-community"
 
     - name: Upload Sonar metrics
       uses: actions/upload-artifact@v6
