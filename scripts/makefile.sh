@@ -1,41 +1,42 @@
 #!/bin/bash
 
 export SONAR_INSTANCE_NAME=${SONAR_INSTANCE_NAME:-"sonar-server"}
-export SONAR_PROJECT_NAME=${SONAR_PROJECT_NAME:-"$(basename `pwd`)"}
-export SONAR_PROJECT_KEY=${SONAR_PROJECT_KEY:-"$(basename `pwd`)"}
+export SONAR_INSTANCE_PORT=${SONAR_INSTANCE_PORT:-"9234"}
+export SONAR_PROJECT_NAME="${SONAR_PROJECT_NAME:-$(basename "$(pwd)")}"
+export SONAR_PROJECT_KEY="${SONAR_PROJECT_KEY:-$(basename "$(pwd)")}"
 export SONAR_GITROOT=${SONAR_GITROOT:-"$(pwd)"}
 export SONAR_SOURCE_PATH=${SONAR_SOURCE_PATH:-"."}
 export SONAR_METRICS_PATH=${SONAR_METRICS_PATH:-"./sonar-metrics.json"}
+export SONAR_EXTENSION_DIR="${HOME}/.sonarless/extensions"
 
-export DOCKER_SONAR_CLI=sonarsource/sonar-scanner-cli
-export DOCKER_SONAR_SERVER=sonarqube
+export DOCKER_SONAR_CLI=${DOCKER_SONAR_CLI:-"sonarsource/sonar-scanner-cli:11.3"}
+export DOCKER_SONAR_SERVER=${DOCKER_SONAR_SERVER:-"sonarqube:25.5.0.107428-community"}
 
 export CLI_NAME="sonarless"
-export SONAR_PASSWORD=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 16 | head -n 1)
 
 function uri_wait(){
     set +e
     URL=$1
     SLEEP_INT=${2:-60}
-    for i in $(seq 1 ${SLEEP_INT}); do
+    for _ in $(seq 1 "${SLEEP_INT}"); do
         sleep 1
         printf .
-        HTTP_CODE=$(curl -k -s -o /dev/null -I -w "%{http_code}" -H 'User-Agent: Mozilla/6.0' ${URL})
+        HTTP_CODE=$(curl -k -s -o /dev/null -I -w "%{http_code}" -H 'User-Agent: Mozilla/6.0' "${URL}")
         [[ "${HTTP_CODE}" == "200" ]] && EXIT_CODE=0 || EXIT_CODE=-1
         [[ "${EXIT_CODE}" -eq 0 ]] && echo && return
     done
     echo
     set -e
-    return ${EXIT_CODE}
+    return "${EXIT_CODE}"
 }
 
 function help() {
     echo ''
     echo '                                               _ '
-    echo '               ___   ___   _ __    __ _  _ __ | |  ___  ___  ___      ___   ___   __ _  _ __ '
-    echo '              / __| / _ \ | "_ \  / _` || "__|| | / _ \/ __|/ __|    / __| / __| / _` || "_ \ '
-    echo '              \__ \| (_) || | | || (_| || |   | ||  __/\__ \\__ \    \__ \| (__ | (_| || | | |'
-    echo '              |___/ \___/ |_| |_| \__,_||_|   |_| \___||___/|___/    |___/ \___| \__,_||_| |_|'
+    echo '               ___   ___   _ __    __ _  _ __ | |  ___  ___  ___ '
+    echo '              / __| / _ \ | "_ \  / _` || "__|| | / _ \/ __|/ __| '
+    echo '              \__ \| (_) || | | || (_| || |   | ||  __/\__ \\__ \ '
+    echo '              |___/ \___/ |_| |_| \__,_||_|   |_| \___||___/|___/ '
     echo ''
     echo ''
     echo "${CLI_NAME} help        : this help menu"
@@ -53,126 +54,158 @@ function help() {
 
 function start() {
     docker-deps-get
+    sonar-ext-get
 
-    docker inspect ${SONAR_INSTANCE_NAME} >/dev/null 2>&1
-    if [[ $? -ne 0 ]]; then
-        docker run -d --name ${SONAR_INSTANCE_NAME} -p 9000:9000 sonarqube 2>&1 > /dev/null
+    if ! docker inspect "${SONAR_INSTANCE_NAME}" > /dev/null 2>&1; then
+        docker run -d --name "${SONAR_INSTANCE_NAME}" -p "${SONAR_INSTANCE_PORT}:9000" --network "${CLI_NAME}"  \
+            -v "${SONAR_EXTENSION_DIR}:/opt/sonarqube/extensions/plugins" \
+            -v "${SONAR_EXTENSION_DIR}:/usr/local/bin" \
+            "${DOCKER_SONAR_SERVER}" > /dev/null 2>&1
     else
-        docker start ${SONAR_INSTANCE_NAME} 2>&1 > /dev/null
+        docker start "${SONAR_INSTANCE_NAME}" > /dev/null 2>&1
     fi
 
     # 1. Wait for services to be up
     printf "Booting SonarQube docker instance "
-    uri_wait http://localhost:9000 60
+    uri_wait "http://localhost:${SONAR_INSTANCE_PORT}" 60
     printf 'Waiting for SonarQube service availability '
-    for i in $(seq 1 180); do
+    for _ in $(seq 1 180); do
         sleep 1
         printf .
-        status_value=$(curl -s http://localhost:9000/api/system/status | jq -r '.status')
+        status_value=$(curl -s "http://localhost:${SONAR_INSTANCE_PORT}/api/system/status" | jq -r '.status')
 
         # Check if the status value is "running"
         if [[ "$status_value" == "UP" ]]; then
-            printf "\nSonarQube is running\n"
+            echo
             break
         fi
     done
 
-    # 2. Reset admin password to sonar
-    curl -s -X POST -u "admin:admin" \
-        -d "login=admin&previousPassword=admin&password=${SONAR_PASSWORD}" \
-        http://localhost:9000/api/users/change_password
-    echo "Local sonarqube URI: http://localhost:9000"
+    status_value=$(curl -s "http://localhost:${SONAR_INSTANCE_PORT}/api/system/status" | jq -r '.status')
+    # Check if the status value is "running"
+    if [[ "$status_value" == "UP" ]]; then
+        echo "SonarQube is running"
+    else
+        docker logs -f "${SONAR_INSTANCE_NAME}"
+        echo "SonarQube is NOT running, exiting"
+        exit 1
+    fi
 
-    # 3. Create default project and set default fav
-    curl -s -u "admin:${SONAR_PASSWORD}" -X POST "http://localhost:9000/api/projects/create?name=${SONAR_PROJECT_NAME}&project=${SONAR_PROJECT_NAME}" | jq
-    curl -s -u "admin:${SONAR_PASSWORD}" -X POST "http://localhost:9000/api/users/set_homepage?type=PROJECT&component=${SONAR_PROJECT_NAME}"
-    echo "Credentials: admin/${SONAR_PASSWORD}"
+    # 2. Reset admin password to sonarless123
+    curl -s -X POST -u "admin:admin" \
+        -d "login=admin&previousPassword=admin&password=Son@rless123" \
+        "http://localhost:${SONAR_INSTANCE_PORT}/api/users/change_password"
+    echo "Local sonarqube URI: http://localhost:${SONAR_INSTANCE_PORT}"
+
+    echo "Credentials: admin/Son@rless123"
 
 }
 
 function stop() {
-    docker stop ${SONAR_INSTANCE_NAME} >/dev/null 2>&1 && echo "Local SonarQube has been stopped"
+    docker stop "${SONAR_INSTANCE_NAME}" > /dev/null 2>&1 && echo "Local SonarQube has been stopped"
 }
 
 function scan() {
     start
 
-    # 1. Get internal IP for Sonar-Server
-    export DOCKER_SONAR_IP=$(docker inspect ${SONAR_INSTANCE_NAME} | jq -r '.[].NetworkSettings.IPAddress')
+    # 1. Create default project and set default fav
+    curl -s -u "admin:Son@rless123" -X POST "http://localhost:${SONAR_INSTANCE_PORT}/api/projects/create?name=${SONAR_PROJECT_NAME}&project=${SONAR_PROJECT_NAME}" | jq
+    curl -s -u "admin:Son@rless123" -X POST "http://localhost:${SONAR_INSTANCE_PORT}/api/users/set_homepage?type=PROJECT&component=${SONAR_PROJECT_NAME}"
 
     echo "SONAR_GITROOT: ${SONAR_GITROOT}"
     echo "SONAR_SOURCE_PATH: ${SONAR_SOURCE_PATH}"
 
-    # 2. Create token and scan
-    export SONAR_TOKEN=$(curl -s -X POST -u "admin:${SONAR_PASSWORD}" "http://${DOCKER_SONAR_IP}:9000/api/user_tokens/generate?name=$(date +%s%N)" | jq -r .token)
-    docker run --rm \
-        -e SONAR_HOST_URL="http://${DOCKER_SONAR_IP}:9000"  \
-        -e SONAR_TOKEN=${SONAR_TOKEN} \
+    # 2. Create token and scan using internal-ip becos of docker to docker communication
+    SONAR_TOKEN=$(curl -s -X POST -u "admin:Son@rless123" "http://localhost:${SONAR_INSTANCE_PORT}/api/user_tokens/generate?name=$(date +%s%N)" | jq -r .token)
+    export SONAR_TOKEN
+
+    docker run --rm --network "${CLI_NAME}" \
+        -e SONAR_HOST_URL="http://${SONAR_INSTANCE_NAME}:9000"  \
+        -e SONAR_TOKEN="${SONAR_TOKEN}" \
         -e SONAR_SCANNER_OPTS="-Dsonar.projectKey=${SONAR_PROJECT_NAME} -Dsonar.sources=${SONAR_SOURCE_PATH}" \
         -v "${SONAR_GITROOT}:/usr/src" \
-        sonarsource/sonar-scanner-cli
+        "${DOCKER_SONAR_CLI}";
+    SCAN_RET_CODE="$?"
 
     # 3. Wait for scanning to be done
-    printf '\nWaiting for analysis '
-    for i in $(seq 1 120); do
-        sleep 1
-        printf .
-        status_value=$(curl -s -u "admin:${SONAR_PASSWORD}" http://${DOCKER_SONAR_IP}:9000/api/qualitygates/project_status?projectKey=${SONAR_PROJECT_NAME} | jq -r .projectStatus.status)
-        # Checking if the status value is not "NONE"
-        if [[ "$status_value" != "NONE" ]]; then
-            printf "\nSonarQube scanning done\n"
-            printf "Use webui http://localhost:9000 (admin/${SONAR_PASSWORD}) or 'sonarless results' to get scan outputs\n"
-            break
-        fi
-    done
+    if [[ "${SCAN_RET_CODE}" -eq "0" ]]; then
+        printf '\nWaiting for analysis'
+        for _ in $(seq 1 120); do
+            sleep 1
+            printf .
+            status_value=$(curl -s -u "admin:Son@rless123" "http://localhost:${SONAR_INSTANCE_PORT}/api/qualitygates/project_status?projectKey=${SONAR_PROJECT_NAME}" | jq -r .projectStatus.status)
+            # Checking if the status value is not "NONE"
+            if [[ "$status_value" != "NONE" ]]; then
+                echo
+                echo "SonarQube scanning done"
+                echo "Use webui http://localhost:${SONAR_INSTANCE_PORT} (admin/sonarless) or 'sonarless results' to get scan outputs"
+                break
+            fi
+        done
+    else
+        printf '\nSonarQube scanning failed!'
+    fi
 }
 
 function results() {
     # use this params to collect stats
-    curl -s -u "admin:${SONAR_PASSWORD}" "http://localhost:9000/api/measures/component?component=${SONAR_PROJECT_NAME}&metricKeys=bugs,vulnerabilities,code_smells,quality_gate_details,violations,duplicated_lines_density,ncloc,coverage,reliability_rating,security_rating,security_review_rating,sqale_rating,security_hotspots,open_issues" \
-        | jq -r > ${SONAR_GITROOT}/${SONAR_METRICS_PATH}
-    cat ${SONAR_GITROOT}/${SONAR_METRICS_PATH}
+    curl -s -u "admin:Son@rless123" "http://localhost:${SONAR_INSTANCE_PORT}/api/measures/component?component=${SONAR_PROJECT_NAME}&metricKeys=bugs,vulnerabilities,code_smells,quality_gate_details,violations,duplicated_lines_density,ncloc,coverage,reliability_rating,security_rating,security_review_rating,sqale_rating,security_hotspots,open_issues" \
+        | jq -r > "${SONAR_GITROOT}/${SONAR_METRICS_PATH}"
+    cat "${SONAR_GITROOT}/${SONAR_METRICS_PATH}"
     echo "Scan results written to  ${SONAR_GITROOT}/${SONAR_METRICS_PATH}"
 }
 
 function docker-deps-get() {
-	( docker image inspect ${DOCKER_SONAR_SERVER} >/dev/null 2>&1 || echo "Downloading SonarQube..."; docker pull ${DOCKER_SONAR_SERVER} ) &
-    ( docker image inspect ${DOCKER_SONAR_CLI} >/dev/null 2>&1 || echo "Downloading Sonar CLI..."; docker pull ${DOCKER_SONAR_CLI} ) &
+	( docker image inspect "${DOCKER_SONAR_SERVER}" > /dev/null 2>&1 || echo "Downloading SonarQube..."; docker pull "${DOCKER_SONAR_SERVER}" > /dev/null 2>&1 ) &
+    ( docker image inspect "${DOCKER_SONAR_CLI}" > /dev/null 2>&1 || echo "Downloading Sonar CLI..."; docker pull "${DOCKER_SONAR_CLI}" > /dev/null 2>&1 ) &
     wait
+    docker network inspect "${CLI_NAME}" > /dev/null 2>&1 || docker network create "${CLI_NAME}" > /dev/null 2>&1
+}
+
+function sonar-ext-get() {
+
+    [ ! -d "${SONAR_EXTENSION_DIR}" ] && echo "Downloading SonarQube Extensions..."; mkdir -p "${SONAR_EXTENSION_DIR}"
+
+    if [ ! -f "${SONAR_EXTENSION_DIR}/shellcheck" ]; then
+        # src: https://github.com/koalaman/shellcheck/blob/master/Dockerfile.multi-arch
+        arch="$(uname -m)"
+        os="$(uname | sed 's/.*/\L&/')"
+        tag="v0.10.0"
+
+        if [ "${arch}" = 'armv7l' ]; then
+            arch='armv6hf'
+        fi
+
+        if [ "${arch}" = 'arm64' ]; then
+            arch='aarch64'
+        fi
+
+        url_base='https://github.com/koalaman/shellcheck/releases/download/'
+        tar_file="${tag}/shellcheck-${tag}.${os}.${arch}.tar.xz"
+        curl -s --fail --location --progress-bar "${url_base}${tar_file}" | tar xJf -
+
+        mv "shellcheck-${tag}/shellcheck" "${SONAR_EXTENSION_DIR}/"
+        rm -rf "shellcheck-${tag}"
+    fi
+
+    SONAR_SHELLCHECK="sonar-shellcheck-plugin-2.5.0.jar"
+    SONAR_SHELLCHECK_URL="https://github.com/sbaudoin/sonar-shellcheck/releases/download/v2.5.0/${SONAR_SHELLCHECK}"
+    if [ ! -f "${SONAR_EXTENSION_DIR}/${SONAR_SHELLCHECK}" ]; then
+        curl -s --fail --location --progress-bar "${SONAR_SHELLCHECK_URL}" > "${SONAR_EXTENSION_DIR}/${SONAR_SHELLCHECK}"
+    fi
+
 }
 
 function docker-clean() {
-    docker rm -f ${SONAR_INSTANCE_NAME}
-    docker image rm -f ${DOCKER_SONAR_CLI} ${DOCKER_SONAR_SERVER}
-    docker image prune -f
+    docker rm -f "${SONAR_INSTANCE_NAME}"
+    docker image rm -f "${DOCKER_SONAR_CLI}" "${DOCKER_SONAR_SERVER}"
     docker volume prune -f
+    docker network rm -f "${CLI_NAME}"
 }
 
 function uninstall() {
-    # Local variables
-    sonarless_bashrc="${HOME}/.bashrc"
-    sonarless_zshrc="${HOME}/.zshrc"
-
     docker-clean
-
-    # Do not remove alias in rc files
-
-    # [[ -s "${sonarless_bashrc}" ]] && grep 'sonarless' ${sonarless_bashrc}
-    # if [ $? -eq 0 ];then
-    #     temp_file=$(mktemp)
-    #     sed '/sonarless/{x;d;}' ${sonarless_bashrc} > ${temp_file}
-    #     mv ${temp_file} ${sonarless_bashrc}
-    # fi
-
-    # [[ -s "${sonarless_zshrc}" ]] && grep 'sonarless' ${sonarless_zshrc}
-    # if [ $? -eq 0 ];then
-    #     temp_file=$(mktemp)
-    #     sed '/sonarless/{x;d;}' ${sonarless_zshrc} > ${temp_file}
-    #     mv ${temp_file} ${sonarless_zshrc}
-    # fi
-
-    rm -rf ${HOME}/.${CLI_NAME}
-
+    rm -rf "${HOME}/.${CLI_NAME}"
 }
 
 $*
