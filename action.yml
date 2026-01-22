@@ -42,7 +42,9 @@ runs:
 
     - name: Get Docker Dependencies
       shell: bash
-      run: ${{ github.action_path }}/scripts/makefile.sh docker-deps-get
+      run: |
+        ${{ github.action_path }}/scripts/makefile.sh docker-deps-get
+        ${{ github.action_path }}/scripts/makefile.sh sonar-ext-get
 
     - name: Run Sonarless
       shell: bash
