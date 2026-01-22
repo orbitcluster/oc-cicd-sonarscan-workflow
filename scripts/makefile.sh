@@ -136,8 +136,8 @@ function results() {
 }
 
 function docker-deps-get() {
-	( docker image inspect ${DOCKER_SONAR_SERVER} >/dev/null 2>&1 || echo "Downloading SonarQube..."; docker pull ${DOCKER_SONAR_SERVER} >/dev/null 2>&1 ) &
-    ( docker image inspect ${DOCKER_SONAR_CLI} >/dev/null 2>&1 || echo "Downloading Sonar CLI..."; docker pull ${DOCKER_SONAR_CLI} >/dev/null 2>&1 ) &
+	( docker image inspect ${DOCKER_SONAR_SERVER} >/dev/null 2>&1 || echo "Downloading SonarQube..."; docker pull ${DOCKER_SONAR_SERVER} ) &
+    ( docker image inspect ${DOCKER_SONAR_CLI} >/dev/null 2>&1 || echo "Downloading Sonar CLI..."; docker pull ${DOCKER_SONAR_CLI} ) &
     wait
 }
 
