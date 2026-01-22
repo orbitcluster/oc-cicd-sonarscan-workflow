@@ -9,6 +9,9 @@ inputs:
     description: "Path to the source code"
     required: false
     default: "src"
+  sonar-password:
+    description: "SonarQube admin password"
+    required: true
 
 runs:
   using: composite
@@ -24,7 +27,7 @@ runs:
         sonar-source-path: ${{ inputs.sonar-source-path }}
         sonar-metrics-path: "./sonar-metrics.json"
       env:
-        SONAR_PASSWORD: "Son@rless123"
+        SONAR_PASSWORD: ${{ inputs.sonar-password }}
 
     - name: Upload Sonar metrics
       uses: actions/upload-artifact@v6
