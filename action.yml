@@ -5,10 +5,26 @@ inputs:
     description: "Number of commits to fetch. 0 indicates all history for all branches and tags."
     required: false
     default: "0"
+  sonar-project-name:
+    description: "SonarQube Project Name"
+    required: false
+    default: ${{github.event.repository.name}}
+  sonar-project-key:
+    description: "SonarQube Project Key"
+    required: false
+    default: ${{github.event.repository.name}}
   sonar-source-path:
     description: "Path to the source code"
     required: false
     default: "src"
+  sonar-metrics-path:
+    description: "Path to the metrics file"
+    required: false
+    default: "./sonar-metrics.json"
+  is-sonar-metrics-upload:
+    description: "Upload Sonar metrics"
+    required: false
+    default: "true"
 
 runs:
   using: composite
@@ -18,23 +34,40 @@ runs:
       with:
         fetch-depth: ${{ inputs.fetch-depth }}
 
+    - name: Get Docker Dependencies
+      shell: bash
+      run: ${{ github.action_path }}/scripts/makefile.sh docker-deps-get
+
     - name: Run Sonarless
-      uses: gitricko/sonarless@v1
-      with:
-        sonar-source-path: ${{ inputs.sonar-source-path }}
-        sonar-metrics-path: "./sonar-metrics.json"
+      shell: bash
+      run: ${{ github.action_path }}/scripts/makefile.sh scan
       env:
-        DOCKER_SONAR_SERVER: "sonarqube:10.6-community"
+        SONAR_PROJECT_NAME: ${{inputs.sonar-project-name}}
+        SONAR_PROJECT_KEY: ${{inputs.sonar-project-key}}
+        SONAR_SOURCE_PATH: ${{inputs.sonar-source-path}}
+        SONAR_METRICS_PATH: ${{inputs.sonar-metrics-path}}
+        SONAR_GITROOT: ${{ github.workspace }}
+
+    - name: Get Sonar Results
+      shell: bash
+      run: ${{ github.action_path }}/scripts/makefile.sh results
+      env:
+        SONAR_PROJECT_NAME: ${{inputs.sonar-project-name}}
+        SONAR_PROJECT_KEY: ${{inputs.sonar-project-key}}
+        SONAR_SOURCE_PATH: ${{inputs.sonar-source-path}}
+        SONAR_METRICS_PATH: ${{inputs.sonar-metrics-path}}
+        SONAR_GITROOT: ${{ github.workspace }}
 
     - name: Upload Sonar metrics
+      if: ${{ inputs.is-sonar-metrics-upload == 'true' }}
       uses: actions/upload-artifact@v6
       with:
         name: sonar-metrics
-        path: "./sonar-metrics.json"
+        path: ${{inputs.sonar-metrics-path}}
 
     - name: Check Sonar Metrics - No Vulnerabilities
       shell: bash
       env:
-        METRICS_PATH: "./sonar-metrics.json"
+        METRICS_PATH: ${{inputs.sonar-metrics-path}}
         QUALITY_GATE_PATH: ${{ github.action_path }}/scripts/quality-gate.json
       run: bash ${{ github.action_path }}/scripts/check_quality_gate.sh
