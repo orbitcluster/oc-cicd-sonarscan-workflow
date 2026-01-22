@@ -40,6 +40,11 @@ runs:
         chmod +x ${{ github.action_path }}/scripts/makefile.sh
         chmod +x ${{ github.action_path }}/scripts/check_quality_gate.sh
 
+    - name: Check docker installation
+      shell: bash
+      run: |
+        docker --version
+
     - name: Get Docker Dependencies
       shell: bash
       run: |
