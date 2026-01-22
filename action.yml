@@ -34,6 +34,12 @@ runs:
       with:
         fetch-depth: ${{ inputs.fetch-depth }}
 
+    - name: Set Script Permissions
+      shell: bash
+      run: |
+        chmod +x ${{ github.action_path }}/scripts/makefile.sh
+        chmod +x ${{ github.action_path }}/scripts/check_quality_gate.sh
+
     - name: Get Docker Dependencies
       shell: bash
       run: ${{ github.action_path }}/scripts/makefile.sh docker-deps-get
