@@ -92,13 +92,6 @@ runs:
         name: sonar-metrics
         path: ${{inputs.sonar-metrics-path}}
 
-    - name: Check Sonar Metrics - No Vulnerabilities
-      shell: bash
-      env:
-        METRICS_PATH: ${{inputs.sonar-metrics-path}}
-        QUALITY_GATE_PATH: ${{ github.action_path }}/scripts/quality-gate.json
-      run: bash ${{ github.action_path }}/scripts/check_quality_gate.sh
-
     - name: Post PR Comment with Findings
       if: ${{ github.event_name == 'pull_request' }}
       shell: bash
@@ -111,3 +104,10 @@ runs:
         GITHUB_REPOSITORY: ${{ github.repository }}
         GITHUB_SHA: ${{ github.event.pull_request.head.sha }}
         PR_NUMBER: ${{ github.event.pull_request.number }}
+
+    - name: Check Sonar Metrics - No Vulnerabilities
+      shell: bash
+      env:
+        METRICS_PATH: ${{inputs.sonar-metrics-path}}
+        QUALITY_GATE_PATH: ${{ github.action_path }}/scripts/quality-gate.json
+      run: bash ${{ github.action_path }}/scripts/check_quality_gate.sh
