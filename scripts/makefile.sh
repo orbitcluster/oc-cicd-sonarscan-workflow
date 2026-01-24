@@ -8,9 +8,23 @@ export SONAR_GITROOT=${SONAR_GITROOT:-"$(pwd)"}
 export SONAR_SOURCE_PATH=${SONAR_SOURCE_PATH:-"."}
 export SONAR_METRICS_PATH=${SONAR_METRICS_PATH:-"./sonar-metrics.json"}
 export SONAR_EXTENSION_DIR="${HOME}/.sonarless/extensions"
+export SONAR_PASSWORD_FILE="${HOME}/.sonarless/.password"
 
 # Generate a random password for SonarQube admin user (includes special character for SonarQube requirements)
-export SONAR_ADMIN_PASSWORD=${SONAR_ADMIN_PASSWORD:-$(openssl rand -base64 16 | tr -dc 'a-zA-Z0-9' | head -c 15)@}
+# Password is persisted to file to ensure consistency across GitHub Actions steps
+function get_or_create_password() {
+    if [[ -f "${SONAR_PASSWORD_FILE}" ]]; then
+        cat "${SONAR_PASSWORD_FILE}"
+    else
+        mkdir -p "$(dirname "${SONAR_PASSWORD_FILE}")"
+        local password
+        password="$(openssl rand -base64 16 | tr -dc 'a-zA-Z0-9' | head -c 15)@"
+        echo "${password}" > "${SONAR_PASSWORD_FILE}"
+        chmod 600 "${SONAR_PASSWORD_FILE}"
+        echo "${password}"
+    fi
+}
+export SONAR_ADMIN_PASSWORD=${SONAR_ADMIN_PASSWORD:-$(get_or_create_password)}
 
 export DOCKER_SONAR_CLI=${DOCKER_SONAR_CLI:-"sonarsource/sonar-scanner-cli:11.3"}
 export DOCKER_SONAR_SERVER=${DOCKER_SONAR_SERVER:-"sonarqube:25.5.0.107428-community"}
