@@ -29,7 +29,7 @@ if [ -n "${QUALITY_GATE_PATH}" ] && [ -f "${QUALITY_GATE_PATH}" ]; then
 
     # Extract value from metrics file
     # Assuming metric names in QG match 'metric' field in sonar-metrics.json
-    ACTUAL=$(jq -r --arg KEY "$KEY" '.component.measures[] | select(.metric == $KEY).value // "0"' "${METRICS_PATH}")
+    ACTUAL=$(jq -r --arg KEY "$KEY" '(.component.measures[] | select(.metric == $KEY) | .value) // "0"' "${METRICS_PATH}")
 
     # Handle case where metric is not found in actual metrics (default to 0, or handle error?)
     # For now, default to 0 is safe for "bad" metrics.

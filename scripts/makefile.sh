@@ -236,28 +236,27 @@ function post-pr-comment() {
     COMMENT_BODY+="### 📊 Summary\n\n"
     COMMENT_BODY+="| Metric | Count |\n"
     COMMENT_BODY+="|--------|-------|\n"
-    COMMENT_BODY+="| 📝 Total Issues | ${TOTAL_ISSUES} |\n"
     COMMENT_BODY+="| 🐛 Bugs | ${BUGS} |\n"
     COMMENT_BODY+="| 🔓 Vulnerabilities | ${VULNERABILITIES} |\n"
     COMMENT_BODY+="| 🔥 Security Hotspots | ${HOTSPOTS_COUNT} |\n"
-    COMMENT_BODY+="| 🧹 Code Smells | ${CODE_SMELLS} |\n"
+    COMMENT_BODY+="| ⚠️ Code Smells | ${CODE_SMELLS} |\n"
     COMMENT_BODY+="| 📈 Coverage | ${COVERAGE}% |\n"
     COMMENT_BODY+="| 📋 Duplication | ${DUPLICATION}% |\n\n"
 
     # Build the detailed issues table if there are issues
     if [[ "${TOTAL_ISSUES}" -gt 0 ]] || [[ "${HOTSPOTS_COUNT}" -gt 0 ]]; then
         COMMENT_BODY+="### 📝 Issue Details\n\n"
-        COMMENT_BODY+="| Type | Severity | Message | Location |\n"
-        COMMENT_BODY+="|------|----------|---------|----------|\n"
+        COMMENT_BODY+="| | Type | Severity | Message | Location |\n"
+        COMMENT_BODY+="|--|------|----------|---------|----------|\n"
 
         # Add bugs to table
         BUGS_ROWS=$(echo "${ISSUES_JSON}" | jq -r --arg base_url "${GITHUB_BASE_URL}" '.issues[] | select(.type=="BUG") | 
             ((.component | split(":")[1]) // .component) as $file |
             (.line // "N/A") as $line |
             if $line != "N/A" then
-                "| 🐛 Bug | \(.severity) | \(.message | gsub("\\|"; "\\\\|") | gsub("\n"; " ")) | [\($file):\($line)](\($base_url)/\($file)#L\($line)) |"
+                "| 🐛 | Bug | \(.severity) | \(.message | gsub("\\|"; "\\\\|") | gsub("\n"; " ")) | [\($file):\($line)](\($base_url)/\($file)#L\($line)) |"
             else
-                "| 🐛 Bug | \(.severity) | \(.message | gsub("\\|"; "\\\\|") | gsub("\n"; " ")) | [\($file)](\($base_url)/\($file)) |"
+                "| 🐛 | Bug | \(.severity) | \(.message | gsub("\\|"; "\\\\|") | gsub("\n"; " ")) | [\($file)](\($base_url)/\($file)) |"
             end' 2>/dev/null)
         if [[ -n "${BUGS_ROWS}" ]]; then
             COMMENT_BODY+="${BUGS_ROWS}\n"
@@ -268,9 +267,9 @@ function post-pr-comment() {
             ((.component | split(":")[1]) // .component) as $file |
             (.line // "N/A") as $line |
             if $line != "N/A" then
-                "| 🔓 Vulnerability | \(.severity) | \(.message | gsub("\\|"; "\\\\|") | gsub("\n"; " ")) | [\($file):\($line)](\($base_url)/\($file)#L\($line)) |"
+                "| 🔓 | Vulnerability | \(.severity) | \(.message | gsub("\\|"; "\\\\|") | gsub("\n"; " ")) | [\($file):\($line)](\($base_url)/\($file)#L\($line)) |"
             else
-                "| 🔓 Vulnerability | \(.severity) | \(.message | gsub("\\|"; "\\\\|") | gsub("\n"; " ")) | [\($file)](\($base_url)/\($file)) |"
+                "| 🔓 | Vulnerability | \(.severity) | \(.message | gsub("\\|"; "\\\\|") | gsub("\n"; " ")) | [\($file)](\($base_url)/\($file)) |"
             end' 2>/dev/null)
         if [[ -n "${VULNS_ROWS}" ]]; then
             COMMENT_BODY+="${VULNS_ROWS}\n"
@@ -281,9 +280,9 @@ function post-pr-comment() {
             ((.component | split(":")[1]) // .component) as $file |
             (.line // "N/A") as $line |
             if $line != "N/A" then
-                "| 🔥 Hotspot | \(.vulnerabilityProbability) | \(.message | gsub("\\|"; "\\\\|") | gsub("\n"; " ")) | [\($file):\($line)](\($base_url)/\($file)#L\($line)) |"
+                "| 🔥 | Hotspot | \(.vulnerabilityProbability) | \(.message | gsub("\\|"; "\\\\|") | gsub("\n"; " ")) | [\($file):\($line)](\($base_url)/\($file)#L\($line)) |"
             else
-                "| 🔥 Hotspot | \(.vulnerabilityProbability) | \(.message | gsub("\\|"; "\\\\|") | gsub("\n"; " ")) | [\($file)](\($base_url)/\($file)) |"
+                "| 🔥 | Hotspot | \(.vulnerabilityProbability) | \(.message | gsub("\\|"; "\\\\|") | gsub("\n"; " ")) | [\($file)](\($base_url)/\($file)) |"
             end' 2>/dev/null)
         if [[ -n "${HOTSPOTS_ROWS}" ]]; then
             COMMENT_BODY+="${HOTSPOTS_ROWS}\n"
@@ -294,9 +293,9 @@ function post-pr-comment() {
             ((.component | split(":")[1]) // .component) as $file |
             (.line // "N/A") as $line |
             if $line != "N/A" then
-                "| 🧹 Code Smell | \(.severity) | \(.message | gsub("\\|"; "\\\\|") | gsub("\n"; " ")) | [\($file):\($line)](\($base_url)/\($file)#L\($line)) |"
+                "| ⚠️ | Code Smell | \(.severity) | \(.message | gsub("\\|"; "\\\\|") | gsub("\n"; " ")) | [\($file):\($line)](\($base_url)/\($file)#L\($line)) |"
             else
-                "| 🧹 Code Smell | \(.severity) | \(.message | gsub("\\|"; "\\\\|") | gsub("\n"; " ")) | [\($file)](\($base_url)/\($file)) |"
+                "| ⚠️ | Code Smell | \(.severity) | \(.message | gsub("\\|"; "\\\\|") | gsub("\n"; " ")) | [\($file)](\($base_url)/\($file)) |"
             end' 2>/dev/null | head -20)
         if [[ -n "${SMELLS_ROWS}" ]]; then
             COMMENT_BODY+="${SMELLS_ROWS}\n"
