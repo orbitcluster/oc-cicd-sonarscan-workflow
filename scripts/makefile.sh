@@ -9,8 +9,8 @@ export SONAR_SOURCE_PATH=${SONAR_SOURCE_PATH:-"."}
 export SONAR_METRICS_PATH=${SONAR_METRICS_PATH:-"./sonar-metrics.json"}
 export SONAR_EXTENSION_DIR="${HOME}/.sonarless/extensions"
 
-# Generate a random password for SonarQube admin user
-export SONAR_ADMIN_PASSWORD=${SONAR_ADMIN_PASSWORD:-$(openssl rand -base64 16 | tr -dc 'a-zA-Z0-9' | head -c 16)}
+# Generate a random password for SonarQube admin user (includes special character for SonarQube requirements)
+export SONAR_ADMIN_PASSWORD=${SONAR_ADMIN_PASSWORD:-$(openssl rand -base64 16 | tr -dc 'a-zA-Z0-9' | head -c 15)@}
 
 export DOCKER_SONAR_CLI=${DOCKER_SONAR_CLI:-"sonarsource/sonar-scanner-cli:11.3"}
 export DOCKER_SONAR_SERVER=${DOCKER_SONAR_SERVER:-"sonarqube:25.5.0.107428-community"}
@@ -100,7 +100,7 @@ function start() {
         "http://localhost:${SONAR_INSTANCE_PORT}/api/users/change_password"
     echo "Local sonarqube URI: http://localhost:${SONAR_INSTANCE_PORT}"
 
-    echo "Credentials: admin/${SONAR_ADMIN_PASSWORD}"
+    echo "SonarQube admin password has been set"
 
 }
 
