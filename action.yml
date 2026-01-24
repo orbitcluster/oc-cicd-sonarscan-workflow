@@ -69,7 +69,6 @@ runs:
         fi
       env:
         DOTNET_BUILD_COMMAND: ${{ inputs.dotnet-build-command }}
-      env:
         SONAR_PROJECT_NAME: ${{inputs.sonar-project-name}}
         SONAR_PROJECT_KEY: ${{inputs.sonar-project-key}}
         SONAR_SOURCE_PATH: ${{inputs.sonar-source-path}}
