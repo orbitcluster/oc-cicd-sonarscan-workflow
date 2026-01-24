@@ -196,6 +196,9 @@ function post-pr-comment() {
 
     echo "Fetching SonarQube issues for PR comment..."
 
+    # Get the GitHub base URL for file links
+    GITHUB_BASE_URL="https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_SHA:-HEAD}"
+
     # Fetch all issues from SonarQube
     ISSUES_JSON=$(curl -s -u "admin:${SONAR_ADMIN_PASSWORD}" \
         "http://localhost:${SONAR_INSTANCE_PORT}/api/issues/search?componentKeys=${SONAR_PROJECT_NAME}&resolved=false&ps=500")
@@ -220,54 +223,90 @@ function post-pr-comment() {
     COVERAGE=${COVERAGE:-N/A}
     DUPLICATION=${DUPLICATION:-N/A}
 
-    # Build the comment body
+    # Get total issues count
+    TOTAL_ISSUES=$(echo "${ISSUES_JSON}" | jq -r '.total // 0')
+
+    # Fetch security hotspots
+    HOTSPOTS_JSON=$(curl -s -u "admin:${SONAR_ADMIN_PASSWORD}" \
+        "http://localhost:${SONAR_INSTANCE_PORT}/api/hotspots/search?projectKey=${SONAR_PROJECT_NAME}&ps=100")
+    HOTSPOTS_COUNT=$(echo "${HOTSPOTS_JSON}" | jq -r '.hotspots | length // 0')
+
+    # Build the comment body with all metrics in a summary table
     COMMENT_BODY="## 🔍 SonarQube Analysis Results\n\n"
     COMMENT_BODY+="### 📊 Summary\n\n"
     COMMENT_BODY+="| Metric | Count |\n"
     COMMENT_BODY+="|--------|-------|\n"
+    COMMENT_BODY+="| 📝 Total Issues | ${TOTAL_ISSUES} |\n"
     COMMENT_BODY+="| 🐛 Bugs | ${BUGS} |\n"
     COMMENT_BODY+="| 🔓 Vulnerabilities | ${VULNERABILITIES} |\n"
-    COMMENT_BODY+="| 🔥 Security Hotspots | ${SECURITY_HOTSPOTS} |\n"
+    COMMENT_BODY+="| 🔥 Security Hotspots | ${HOTSPOTS_COUNT} |\n"
     COMMENT_BODY+="| 🧹 Code Smells | ${CODE_SMELLS} |\n"
     COMMENT_BODY+="| 📈 Coverage | ${COVERAGE}% |\n"
     COMMENT_BODY+="| 📋 Duplication | ${DUPLICATION}% |\n\n"
 
-    # Get total issues count
-    TOTAL_ISSUES=$(echo "${ISSUES_JSON}" | jq -r '.total // 0')
+    # Build the detailed issues table if there are issues
+    if [[ "${TOTAL_ISSUES}" -gt 0 ]] || [[ "${HOTSPOTS_COUNT}" -gt 0 ]]; then
+        COMMENT_BODY+="### 📝 Issue Details\n\n"
+        COMMENT_BODY+="| Type | Severity | Message | Location |\n"
+        COMMENT_BODY+="|------|----------|---------|----------|\n"
 
-    if [[ "${TOTAL_ISSUES}" -gt 0 ]]; then
-        COMMENT_BODY+="### 📝 Issues Found (${TOTAL_ISSUES})\n\n"
-
-        # Process bugs
-        BUGS_LIST=$(echo "${ISSUES_JSON}" | jq -r '.issues[] | select(.type=="BUG") | "- **\(.severity)**: \(.message) (`\(.component | split(":")[1] // .component)`:\(.line // "N/A"))"' 2>/dev/null)
-        if [[ -n "${BUGS_LIST}" ]]; then
-            COMMENT_BODY+="<details>\n<summary>🐛 Bugs</summary>\n\n${BUGS_LIST}\n\n</details>\n\n"
+        # Add bugs to table
+        BUGS_ROWS=$(echo "${ISSUES_JSON}" | jq -r --arg base_url "${GITHUB_BASE_URL}" '.issues[] | select(.type=="BUG") | 
+            ((.component | split(":")[1]) // .component) as $file |
+            (.line // "N/A") as $line |
+            if $line != "N/A" then
+                "| 🐛 Bug | \(.severity) | \(.message | gsub("\\|"; "\\\\|") | gsub("\n"; " ")) | [\($file):\($line)](\($base_url)/\($file)#L\($line)) |"
+            else
+                "| 🐛 Bug | \(.severity) | \(.message | gsub("\\|"; "\\\\|") | gsub("\n"; " ")) | [\($file)](\($base_url)/\($file)) |"
+            end' 2>/dev/null)
+        if [[ -n "${BUGS_ROWS}" ]]; then
+            COMMENT_BODY+="${BUGS_ROWS}\n"
         fi
 
-        # Process vulnerabilities
-        VULNS_LIST=$(echo "${ISSUES_JSON}" | jq -r '.issues[] | select(.type=="VULNERABILITY") | "- **\(.severity)**: \(.message) (`\(.component | split(":")[1] // .component)`:\(.line // "N/A"))"' 2>/dev/null)
-        if [[ -n "${VULNS_LIST}" ]]; then
-            COMMENT_BODY+="<details>\n<summary>🔓 Vulnerabilities</summary>\n\n${VULNS_LIST}\n\n</details>\n\n"
+        # Add vulnerabilities to table
+        VULNS_ROWS=$(echo "${ISSUES_JSON}" | jq -r --arg base_url "${GITHUB_BASE_URL}" '.issues[] | select(.type=="VULNERABILITY") | 
+            ((.component | split(":")[1]) // .component) as $file |
+            (.line // "N/A") as $line |
+            if $line != "N/A" then
+                "| 🔓 Vulnerability | \(.severity) | \(.message | gsub("\\|"; "\\\\|") | gsub("\n"; " ")) | [\($file):\($line)](\($base_url)/\($file)#L\($line)) |"
+            else
+                "| 🔓 Vulnerability | \(.severity) | \(.message | gsub("\\|"; "\\\\|") | gsub("\n"; " ")) | [\($file)](\($base_url)/\($file)) |"
+            end' 2>/dev/null)
+        if [[ -n "${VULNS_ROWS}" ]]; then
+            COMMENT_BODY+="${VULNS_ROWS}\n"
         fi
 
-        # Process security hotspots (from separate API)
-        HOTSPOTS_JSON=$(curl -s -u "admin:${SONAR_ADMIN_PASSWORD}" \
-            "http://localhost:${SONAR_INSTANCE_PORT}/api/hotspots/search?projectKey=${SONAR_PROJECT_NAME}&ps=100")
-        HOTSPOTS_LIST=$(echo "${HOTSPOTS_JSON}" | jq -r '.hotspots[]? | "- **\(.vulnerabilityProbability)**: \(.message) (`\(.component | split(":")[1] // .component)`:\(.line // "N/A"))"' 2>/dev/null)
-        if [[ -n "${HOTSPOTS_LIST}" ]]; then
-            COMMENT_BODY+="<details>\n<summary>🔥 Security Hotspots</summary>\n\n${HOTSPOTS_LIST}\n\n</details>\n\n"
+        # Add security hotspots to table
+        HOTSPOTS_ROWS=$(echo "${HOTSPOTS_JSON}" | jq -r --arg base_url "${GITHUB_BASE_URL}" '.hotspots[]? | 
+            ((.component | split(":")[1]) // .component) as $file |
+            (.line // "N/A") as $line |
+            if $line != "N/A" then
+                "| 🔥 Hotspot | \(.vulnerabilityProbability) | \(.message | gsub("\\|"; "\\\\|") | gsub("\n"; " ")) | [\($file):\($line)](\($base_url)/\($file)#L\($line)) |"
+            else
+                "| 🔥 Hotspot | \(.vulnerabilityProbability) | \(.message | gsub("\\|"; "\\\\|") | gsub("\n"; " ")) | [\($file)](\($base_url)/\($file)) |"
+            end' 2>/dev/null)
+        if [[ -n "${HOTSPOTS_ROWS}" ]]; then
+            COMMENT_BODY+="${HOTSPOTS_ROWS}\n"
         fi
 
-        # Process code smells (limit to first 20 to avoid huge comments)
-        SMELLS_LIST=$(echo "${ISSUES_JSON}" | jq -r '.issues[] | select(.type=="CODE_SMELL") | "- **\(.severity)**: \(.message) (`\(.component | split(":")[1] // .component)`:\(.line // "N/A"))"' 2>/dev/null | head -20)
-        if [[ -n "${SMELLS_LIST}" ]]; then
+        # Add code smells to table (limit to 20)
+        SMELLS_ROWS=$(echo "${ISSUES_JSON}" | jq -r --arg base_url "${GITHUB_BASE_URL}" '.issues[] | select(.type=="CODE_SMELL") | 
+            ((.component | split(":")[1]) // .component) as $file |
+            (.line // "N/A") as $line |
+            if $line != "N/A" then
+                "| 🧹 Code Smell | \(.severity) | \(.message | gsub("\\|"; "\\\\|") | gsub("\n"; " ")) | [\($file):\($line)](\($base_url)/\($file)#L\($line)) |"
+            else
+                "| 🧹 Code Smell | \(.severity) | \(.message | gsub("\\|"; "\\\\|") | gsub("\n"; " ")) | [\($file)](\($base_url)/\($file)) |"
+            end' 2>/dev/null | head -20)
+        if [[ -n "${SMELLS_ROWS}" ]]; then
+            COMMENT_BODY+="${SMELLS_ROWS}\n"
             SMELLS_COUNT=$(echo "${ISSUES_JSON}" | jq -r '[.issues[] | select(.type=="CODE_SMELL")] | length')
             if [[ "${SMELLS_COUNT}" -gt 20 ]]; then
-                COMMENT_BODY+="<details>\n<summary>🧹 Code Smells (showing 20 of ${SMELLS_COUNT})</summary>\n\n${SMELLS_LIST}\n\n</details>\n\n"
-            else
-                COMMENT_BODY+="<details>\n<summary>🧹 Code Smells</summary>\n\n${SMELLS_LIST}\n\n</details>\n\n"
+                COMMENT_BODY+="\n*Showing 20 of ${SMELLS_COUNT} code smells*\n"
             fi
         fi
+
+        COMMENT_BODY+="\n"
     else
         COMMENT_BODY+="### ✅ No issues found!\n\n"
     fi
