@@ -29,6 +29,10 @@ inputs:
     description: "GitHub token for posting PR comments."
     required: false
     default: ${{ github.token }}
+  dotnet-build-command:
+    description: "Command to build the .NET project (e.g., 'dotnet build'). Required for .NET scanning."
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -57,7 +61,14 @@ runs:
 
     - name: Run Sonarless
       shell: bash
-      run: ${{ github.action_path }}/scripts/makefile.sh scan
+      run: |
+        if [[ -n "${{ inputs.dotnet-build-command }}" ]]; then
+          ${{ github.action_path }}/scripts/makefile.sh dotnet-scan
+        else
+          ${{ github.action_path }}/scripts/makefile.sh scan
+        fi
+      env:
+        DOTNET_BUILD_COMMAND: ${{ inputs.dotnet-build-command }}
       env:
         SONAR_PROJECT_NAME: ${{inputs.sonar-project-name}}
         SONAR_PROJECT_KEY: ${{inputs.sonar-project-key}}
