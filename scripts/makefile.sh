@@ -59,6 +59,7 @@ function help() {
     echo "${CLI_NAME} help        : this help menu"
     echo ''
     echo "${CLI_NAME} scan        : to scan all code in current directory. Sonarqube Service will be started"
+    echo "${CLI_NAME} dotnet-scan : to scan .NET code. Requires DOTNET_BUILD_COMMAND env var set."
     echo "${CLI_NAME} results     : show scan results and download the metric json (sonar-metrics.json) in current directory"
     echo ''
     echo "${CLI_NAME} start       : start SonarQube Service docker instance with creds: admin/sonarless"
@@ -122,7 +123,8 @@ function stop() {
     docker stop "${SONAR_INSTANCE_NAME}" > /dev/null 2>&1 && echo "Local SonarQube has been stopped"
 }
 
-function scan() {
+
+function scan_setup() {
     start
 
     # 1. Create default project and set default fav
@@ -135,16 +137,10 @@ function scan() {
     # 2. Create token and scan using internal-ip becos of docker to docker communication
     SONAR_TOKEN=$(curl -s -X POST -u "admin:${SONAR_ADMIN_PASSWORD}" "http://localhost:${SONAR_INSTANCE_PORT}/api/user_tokens/generate?name=$(date +%s%N)" | jq -r .token)
     export SONAR_TOKEN
+}
 
-    docker run --rm --network "${CLI_NAME}" \
-        -e SONAR_HOST_URL="http://${SONAR_INSTANCE_NAME}:9000"  \
-        -e SONAR_TOKEN="${SONAR_TOKEN}" \
-        -e SONAR_SCANNER_OPTS="-Dsonar.projectKey=${SONAR_PROJECT_NAME} -Dsonar.sources=${SONAR_SOURCE_PATH}" \
-        -v "${SONAR_GITROOT}:/usr/src" \
-        "${DOCKER_SONAR_CLI}";
-    SCAN_RET_CODE="$?"
-
-    # 3. Wait for scanning to be done
+function wait_for_quality_gate() {
+    # Wait for scanning to be done
     if [[ "${SCAN_RET_CODE}" -eq "0" ]]; then
         printf '\nWaiting for analysis'
         for _ in $(seq 1 120); do
@@ -161,7 +157,63 @@ function scan() {
         done
     else
         printf '\nSonarQube scanning failed!'
+        exit 1
     fi
+}
+
+function scan() {
+    scan_setup
+
+    docker run --rm --network "${CLI_NAME}" \
+        -e SONAR_HOST_URL="http://${SONAR_INSTANCE_NAME}:9000"  \
+        -e SONAR_TOKEN="${SONAR_TOKEN}" \
+        -e SONAR_SCANNER_OPTS="-Dsonar.projectKey=${SONAR_PROJECT_NAME} -Dsonar.sources=${SONAR_SOURCE_PATH}" \
+        -v "${SONAR_GITROOT}:/usr/src" \
+        "${DOCKER_SONAR_CLI}";
+    SCAN_RET_CODE="$?"
+
+    wait_for_quality_gate
+}
+
+function dotnet-scan() {
+    # Check if dotnet is installed
+    if ! command -v dotnet &> /dev/null; then
+        echo "Error: dotnet command not found. Please ensure .NET SDK is installed."
+        exit 1
+    fi
+
+    # Install dotnet-sonarscanner if not present
+    if ! dotnet tool list -g | grep -q "dotnet-sonarscanner"; then
+        echo "Installing dotnet-sonarscanner..."
+        dotnet tool install --global dotnet-sonarscanner
+        export PATH="$PATH:$HOME/.dotnet/tools"
+    else
+        echo "dotnet-sonarscanner is already installed."
+    fi
+
+    scan_setup
+
+    echo "Starting .NET SonarScanner begin step..."
+    dotnet sonarscanner begin /k:"${SONAR_PROJECT_NAME}" \
+        /d:sonar.host.url="http://localhost:${SONAR_INSTANCE_PORT}" \
+        /d:sonar.token="${SONAR_TOKEN}" \
+        /d:sonar.cs.opencover.reportsPaths="**/coverage.opencover.xml"
+
+    echo "Running build command: ${DOTNET_BUILD_COMMAND}"
+    # execute the build command
+    eval "${DOTNET_BUILD_COMMAND}"
+    BUILD_RET_CODE="$?"
+
+    if [[ "${BUILD_RET_CODE}" -ne 0 ]]; then
+        echo "Build failed! Aborting scan."
+        exit 1
+    fi
+
+    echo "Starting .NET SonarScanner end step..."
+    dotnet sonarscanner end /d:sonar.token="${SONAR_TOKEN}"
+    SCAN_RET_CODE="$?"
+
+    wait_for_quality_gate
 }
 
 function results() {
