@@ -25,6 +25,10 @@ inputs:
     description: "Upload Sonar metrics"
     required: false
     default: "true"
+  github-token:
+    description: "GitHub token for posting PR comments."
+    required: false
+    default: ${{ github.token }}
 
 runs:
   using: composite
@@ -84,3 +88,16 @@ runs:
         METRICS_PATH: ${{inputs.sonar-metrics-path}}
         QUALITY_GATE_PATH: ${{ github.action_path }}/scripts/quality-gate.json
       run: bash ${{ github.action_path }}/scripts/check_quality_gate.sh
+
+    - name: Post PR Comment with Findings
+      if: ${{ github.event_name == 'pull_request' }}
+      shell: bash
+      run: ${{ github.action_path }}/scripts/makefile.sh post-pr-comment
+      env:
+        SONAR_PROJECT_NAME: ${{inputs.sonar-project-name}}
+        SONAR_PROJECT_KEY: ${{inputs.sonar-project-key}}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        GITHUB_EVENT_NAME: ${{ github.event_name }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+

@@ -9,6 +9,9 @@ export SONAR_SOURCE_PATH=${SONAR_SOURCE_PATH:-"."}
 export SONAR_METRICS_PATH=${SONAR_METRICS_PATH:-"./sonar-metrics.json"}
 export SONAR_EXTENSION_DIR="${HOME}/.sonarless/extensions"
 
+# Generate a random password for SonarQube admin user
+export SONAR_ADMIN_PASSWORD=${SONAR_ADMIN_PASSWORD:-$(openssl rand -base64 16 | tr -dc 'a-zA-Z0-9' | head -c 16)}
+
 export DOCKER_SONAR_CLI=${DOCKER_SONAR_CLI:-"sonarsource/sonar-scanner-cli:11.3"}
 export DOCKER_SONAR_SERVER=${DOCKER_SONAR_SERVER:-"sonarqube:25.5.0.107428-community"}
 
@@ -93,11 +96,11 @@ function start() {
 
     # 2. Reset admin password to sonarless123
     curl -s -X POST -u "admin:admin" \
-        -d "login=admin&previousPassword=admin&password=Son@rless123" \
+        -d "login=admin&previousPassword=admin&password=${SONAR_ADMIN_PASSWORD}" \
         "http://localhost:${SONAR_INSTANCE_PORT}/api/users/change_password"
     echo "Local sonarqube URI: http://localhost:${SONAR_INSTANCE_PORT}"
 
-    echo "Credentials: admin/Son@rless123"
+    echo "Credentials: admin/${SONAR_ADMIN_PASSWORD}"
 
 }
 
@@ -109,14 +112,14 @@ function scan() {
     start
 
     # 1. Create default project and set default fav
-    curl -s -u "admin:Son@rless123" -X POST "http://localhost:${SONAR_INSTANCE_PORT}/api/projects/create?name=${SONAR_PROJECT_NAME}&project=${SONAR_PROJECT_NAME}" | jq
-    curl -s -u "admin:Son@rless123" -X POST "http://localhost:${SONAR_INSTANCE_PORT}/api/users/set_homepage?type=PROJECT&component=${SONAR_PROJECT_NAME}"
+    curl -s -u "admin:${SONAR_ADMIN_PASSWORD}" -X POST "http://localhost:${SONAR_INSTANCE_PORT}/api/projects/create?name=${SONAR_PROJECT_NAME}&project=${SONAR_PROJECT_NAME}" | jq
+    curl -s -u "admin:${SONAR_ADMIN_PASSWORD}" -X POST "http://localhost:${SONAR_INSTANCE_PORT}/api/users/set_homepage?type=PROJECT&component=${SONAR_PROJECT_NAME}"
 
     echo "SONAR_GITROOT: ${SONAR_GITROOT}"
     echo "SONAR_SOURCE_PATH: ${SONAR_SOURCE_PATH}"
 
     # 2. Create token and scan using internal-ip becos of docker to docker communication
-    SONAR_TOKEN=$(curl -s -X POST -u "admin:Son@rless123" "http://localhost:${SONAR_INSTANCE_PORT}/api/user_tokens/generate?name=$(date +%s%N)" | jq -r .token)
+    SONAR_TOKEN=$(curl -s -X POST -u "admin:${SONAR_ADMIN_PASSWORD}" "http://localhost:${SONAR_INSTANCE_PORT}/api/user_tokens/generate?name=$(date +%s%N)" | jq -r .token)
     export SONAR_TOKEN
 
     docker run --rm --network "${CLI_NAME}" \
@@ -133,7 +136,7 @@ function scan() {
         for _ in $(seq 1 120); do
             sleep 1
             printf .
-            status_value=$(curl -s -u "admin:Son@rless123" "http://localhost:${SONAR_INSTANCE_PORT}/api/qualitygates/project_status?projectKey=${SONAR_PROJECT_NAME}" | jq -r .projectStatus.status)
+            status_value=$(curl -s -u "admin:${SONAR_ADMIN_PASSWORD}" "http://localhost:${SONAR_INSTANCE_PORT}/api/qualitygates/project_status?projectKey=${SONAR_PROJECT_NAME}" | jq -r .projectStatus.status)
             # Checking if the status value is not "NONE"
             if [[ "$status_value" != "NONE" ]]; then
                 echo
@@ -149,10 +152,134 @@ function scan() {
 
 function results() {
     # use this params to collect stats
-    curl -s -u "admin:Son@rless123" "http://localhost:${SONAR_INSTANCE_PORT}/api/measures/component?component=${SONAR_PROJECT_NAME}&metricKeys=bugs,vulnerabilities,code_smells,quality_gate_details,violations,duplicated_lines_density,ncloc,coverage,reliability_rating,security_rating,security_review_rating,sqale_rating,security_hotspots,open_issues" \
+    curl -s -u "admin:${SONAR_ADMIN_PASSWORD}" "http://localhost:${SONAR_INSTANCE_PORT}/api/measures/component?component=${SONAR_PROJECT_NAME}&metricKeys=bugs,vulnerabilities,code_smells,quality_gate_details,violations,duplicated_lines_density,ncloc,coverage,reliability_rating,security_rating,security_review_rating,sqale_rating,security_hotspots,open_issues" \
         | jq -r > "${SONAR_GITROOT}/${SONAR_METRICS_PATH}"
     cat "${SONAR_GITROOT}/${SONAR_METRICS_PATH}"
     echo "Scan results written to  ${SONAR_GITROOT}/${SONAR_METRICS_PATH}"
+}
+
+function post-pr-comment() {
+    # Check if we're in a PR context
+    if [[ -z "${GITHUB_TOKEN}" ]]; then
+        echo "GITHUB_TOKEN not set, skipping PR comment"
+        return 0
+    fi
+
+    if [[ -z "${GITHUB_EVENT_NAME}" ]] || [[ "${GITHUB_EVENT_NAME}" != "pull_request" ]]; then
+        echo "Not a pull request event, skipping PR comment"
+        return 0
+    fi
+
+    if [[ -z "${PR_NUMBER}" ]]; then
+        echo "PR_NUMBER not set, skipping PR comment"
+        return 0
+    fi
+
+    if [[ -z "${GITHUB_REPOSITORY}" ]]; then
+        echo "GITHUB_REPOSITORY not set, skipping PR comment"
+        return 0
+    fi
+
+    echo "Fetching SonarQube issues for PR comment..."
+
+    # Fetch all issues from SonarQube
+    ISSUES_JSON=$(curl -s -u "admin:${SONAR_ADMIN_PASSWORD}" \
+        "http://localhost:${SONAR_INSTANCE_PORT}/api/issues/search?componentKeys=${SONAR_PROJECT_NAME}&resolved=false&ps=500")
+
+    # Fetch metrics for summary
+    METRICS_JSON=$(curl -s -u "admin:${SONAR_ADMIN_PASSWORD}" \
+        "http://localhost:${SONAR_INSTANCE_PORT}/api/measures/component?component=${SONAR_PROJECT_NAME}&metricKeys=bugs,vulnerabilities,code_smells,security_hotspots,coverage,duplicated_lines_density")
+
+    # Extract counts
+    BUGS=$(echo "${METRICS_JSON}" | jq -r '.component.measures[] | select(.metric=="bugs") | .value // "0"')
+    VULNERABILITIES=$(echo "${METRICS_JSON}" | jq -r '.component.measures[] | select(.metric=="vulnerabilities") | .value // "0"')
+    CODE_SMELLS=$(echo "${METRICS_JSON}" | jq -r '.component.measures[] | select(.metric=="code_smells") | .value // "0"')
+    SECURITY_HOTSPOTS=$(echo "${METRICS_JSON}" | jq -r '.component.measures[] | select(.metric=="security_hotspots") | .value // "0"')
+    COVERAGE=$(echo "${METRICS_JSON}" | jq -r '.component.measures[] | select(.metric=="coverage") | .value // "N/A"')
+    DUPLICATION=$(echo "${METRICS_JSON}" | jq -r '.component.measures[] | select(.metric=="duplicated_lines_density") | .value // "N/A"')
+
+    # Set defaults if empty
+    BUGS=${BUGS:-0}
+    VULNERABILITIES=${VULNERABILITIES:-0}
+    CODE_SMELLS=${CODE_SMELLS:-0}
+    SECURITY_HOTSPOTS=${SECURITY_HOTSPOTS:-0}
+    COVERAGE=${COVERAGE:-N/A}
+    DUPLICATION=${DUPLICATION:-N/A}
+
+    # Build the comment body
+    COMMENT_BODY="## 🔍 SonarQube Analysis Results\n\n"
+    COMMENT_BODY+="### 📊 Summary\n\n"
+    COMMENT_BODY+="| Metric | Count |\n"
+    COMMENT_BODY+="|--------|-------|\n"
+    COMMENT_BODY+="| 🐛 Bugs | ${BUGS} |\n"
+    COMMENT_BODY+="| 🔓 Vulnerabilities | ${VULNERABILITIES} |\n"
+    COMMENT_BODY+="| 🔥 Security Hotspots | ${SECURITY_HOTSPOTS} |\n"
+    COMMENT_BODY+="| 🧹 Code Smells | ${CODE_SMELLS} |\n"
+    COMMENT_BODY+="| 📈 Coverage | ${COVERAGE}% |\n"
+    COMMENT_BODY+="| 📋 Duplication | ${DUPLICATION}% |\n\n"
+
+    # Get total issues count
+    TOTAL_ISSUES=$(echo "${ISSUES_JSON}" | jq -r '.total // 0')
+
+    if [[ "${TOTAL_ISSUES}" -gt 0 ]]; then
+        COMMENT_BODY+="### 📝 Issues Found (${TOTAL_ISSUES})\n\n"
+
+        # Process bugs
+        BUGS_LIST=$(echo "${ISSUES_JSON}" | jq -r '.issues[] | select(.type=="BUG") | "- **\(.severity)**: \(.message) (`\(.component | split(":")[1] // .component)`:\(.line // "N/A"))"' 2>/dev/null)
+        if [[ -n "${BUGS_LIST}" ]]; then
+            COMMENT_BODY+="<details>\n<summary>🐛 Bugs</summary>\n\n${BUGS_LIST}\n\n</details>\n\n"
+        fi
+
+        # Process vulnerabilities
+        VULNS_LIST=$(echo "${ISSUES_JSON}" | jq -r '.issues[] | select(.type=="VULNERABILITY") | "- **\(.severity)**: \(.message) (`\(.component | split(":")[1] // .component)`:\(.line // "N/A"))"' 2>/dev/null)
+        if [[ -n "${VULNS_LIST}" ]]; then
+            COMMENT_BODY+="<details>\n<summary>🔓 Vulnerabilities</summary>\n\n${VULNS_LIST}\n\n</details>\n\n"
+        fi
+
+        # Process security hotspots (from separate API)
+        HOTSPOTS_JSON=$(curl -s -u "admin:${SONAR_ADMIN_PASSWORD}" \
+            "http://localhost:${SONAR_INSTANCE_PORT}/api/hotspots/search?projectKey=${SONAR_PROJECT_NAME}&ps=100")
+        HOTSPOTS_LIST=$(echo "${HOTSPOTS_JSON}" | jq -r '.hotspots[]? | "- **\(.vulnerabilityProbability)**: \(.message) (`\(.component | split(":")[1] // .component)`:\(.line // "N/A"))"' 2>/dev/null)
+        if [[ -n "${HOTSPOTS_LIST}" ]]; then
+            COMMENT_BODY+="<details>\n<summary>🔥 Security Hotspots</summary>\n\n${HOTSPOTS_LIST}\n\n</details>\n\n"
+        fi
+
+        # Process code smells (limit to first 20 to avoid huge comments)
+        SMELLS_LIST=$(echo "${ISSUES_JSON}" | jq -r '.issues[] | select(.type=="CODE_SMELL") | "- **\(.severity)**: \(.message) (`\(.component | split(":")[1] // .component)`:\(.line // "N/A"))"' 2>/dev/null | head -20)
+        if [[ -n "${SMELLS_LIST}" ]]; then
+            SMELLS_COUNT=$(echo "${ISSUES_JSON}" | jq -r '[.issues[] | select(.type=="CODE_SMELL")] | length')
+            if [[ "${SMELLS_COUNT}" -gt 20 ]]; then
+                COMMENT_BODY+="<details>\n<summary>🧹 Code Smells (showing 20 of ${SMELLS_COUNT})</summary>\n\n${SMELLS_LIST}\n\n</details>\n\n"
+            else
+                COMMENT_BODY+="<details>\n<summary>🧹 Code Smells</summary>\n\n${SMELLS_LIST}\n\n</details>\n\n"
+            fi
+        fi
+    else
+        COMMENT_BODY+="### ✅ No issues found!\n\n"
+    fi
+
+    COMMENT_BODY+="---\n*Generated by SonarLess*"
+
+    # Escape the comment body for JSON
+    ESCAPED_BODY=$(echo -e "${COMMENT_BODY}" | jq -Rs .)
+
+    # Post comment to PR
+    echo "Posting comment to PR #${PR_NUMBER}..."
+    RESPONSE=$(curl -s -X POST \
+        -H "Authorization: token ${GITHUB_TOKEN}" \
+        -H "Accept: application/vnd.github.v3+json" \
+        "https://api.github.com/repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+        -d "{\"body\": ${ESCAPED_BODY}}")
+
+    # Check if comment was posted successfully
+    COMMENT_ID=$(echo "${RESPONSE}" | jq -r '.id // empty')
+    if [[ -n "${COMMENT_ID}" ]]; then
+        echo "Successfully posted PR comment (ID: ${COMMENT_ID})"
+    else
+        echo "Failed to post PR comment"
+        echo "Response: ${RESPONSE}"
+        return 1
+    fi
 }
 
 function docker-deps-get() {
