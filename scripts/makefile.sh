@@ -18,7 +18,8 @@ function get_or_create_password() {
     else
         mkdir -p "$(dirname "${SONAR_PASSWORD_FILE}")"
         local password
-        password="$(openssl rand -base64 16 | tr -dc 'a-zA-Z0-9' | head -c 15)@"
+        # Ensure at least one digit is present
+        password="$(openssl rand -base64 16 | tr -dc 'a-zA-Z0-9' | head -c 14)$((RANDOM % 10))@"
         echo "${password}" > "${SONAR_PASSWORD_FILE}"
         chmod 600 "${SONAR_PASSWORD_FILE}"
         echo "${password}"
