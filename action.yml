@@ -1,10 +1,6 @@
 name: SonarLess Scan
 description: SonarLess Scan Action
 inputs:
-  fetch-depth:
-    description: "Number of commits to fetch. 0 indicates all history for all branches and tags."
-    required: false
-    default: "0"
   sonar-project-name:
     description: "SonarQube Project Name"
     required: false
@@ -37,11 +33,6 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Checkout
-      uses: actions/checkout@v6
-      with:
-        fetch-depth: ${{ inputs.fetch-depth }}
-
     - name: Set Script Permissions
       shell: bash
       run: |
